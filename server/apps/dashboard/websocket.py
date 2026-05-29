@@ -51,14 +51,14 @@ async def ws_stream(websocket: WebSocket):
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        await hub.disconnect(websocket)
+        hub.disconnect_stream(websocket)
 
 
 async def ws_events(websocket: WebSocket):
     """
     Stream event anomali real-time (LOW_QUALITY, CRITICAL, VALIDATION_ERROR, dll).
     """
-    await hub.connect_events(websocket)
+    await hub.connect_event(websocket)
     try:
         # Kirim 10 event terakhir sebagai context awal
         recent = storage.get_last_events(n=10)
@@ -77,4 +77,4 @@ async def ws_events(websocket: WebSocket):
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        await hub.disconnect(websocket)
+        hub.disconnect_event(websocket)

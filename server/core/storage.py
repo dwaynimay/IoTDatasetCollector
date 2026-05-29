@@ -66,6 +66,27 @@ class StorageManager:
             )
             self._conn.commit()
 
+    def insert_samples_batch(
+        self,
+        node_id:   int,
+        timestamp: int,
+        signals:   dict[str, float],
+    ) -> None:
+        """Insert semua sinyal dalam 1 transaksi — 1 lock, 1 commit."""
+        self._ensure_open()
+        ts_server = int(time.time() * 1000)
+        rows = [
+            (node_id, timestamp, ts_server, sig, val)
+            for sig, val in signals.items()
+        ]
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO samples (node_id, ts_sensor_ms, ts_server_ms, signal, value)"
+                " VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+            self._conn.commit()
+
     def log_event(
         self,
         node_id:    int,
@@ -219,6 +240,9 @@ class StorageManager:
 
             CREATE INDEX IF NOT EXISTS idx_samples_node_signal
                 ON samples (node_id, signal, ts_sensor_ms DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_samples_server_ts
+                ON samples (ts_server_ms);
             """
         )
         self._conn.commit()

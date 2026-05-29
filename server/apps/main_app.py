@@ -115,16 +115,16 @@ def _on_message(client, userdata, message) -> None:
             )
         _node_last_ts[node_id] = ts
 
-    # ── Simpan ke SQLite ──────────────────────────────────────────────────────
+    # ── Simpan ke SQLite (1 transaksi untuk semua sinyal) ─────────────────────
     try:
-        for sig in SIGNALS:
-            if sig in payload:
-                storage.insert_sample(
-                    node_id   = node_id,
-                    signal    = sig,
-                    timestamp = ts,
-                    value     = float(payload[sig]),
-                )
+        signals_to_insert = {
+            sig: float(payload[sig]) for sig in SIGNALS if sig in payload
+        }
+        storage.insert_samples_batch(
+            node_id   = node_id,
+            timestamp = ts,
+            signals   = signals_to_insert,
+        )
     except Exception as exc:
         logger.error("DB insert error node %d: %s", node_id, exc)
         return
