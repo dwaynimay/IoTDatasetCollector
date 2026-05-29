@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { fetchStatus, fetchMetrics, fetchDB } from './api.js';
+import { fetchStatus, fetchMetrics, fetchDB, fetchMLStatus } from './api.js';
 import { connectWS, closeWS } from './ws.js';
 import { renderNodeList, selectNode } from './nodes.js';
 
@@ -9,7 +9,13 @@ export async function init() {
   
   closeWS();
   
-
+  // Initial fetch for ML labels/metadata
+  try {
+    await fetchMLStatus();
+  } catch (err) {
+    console.error('Failed to fetch ML status:', err);
+  }
+  
   // Initial fetch
   await fetchAll();
   

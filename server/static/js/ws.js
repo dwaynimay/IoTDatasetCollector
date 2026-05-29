@@ -1,5 +1,11 @@
 import { state } from './state.js';
 import { updateWSStatus } from './ui.js';
+// We will create these modules in Fase 5
+// import { updateNodeCard } from './nodes.js';
+// import { updateEKGBuffer } from './charts/ekg_strip.js';
+// import { updateVitalsBuffer } from './charts/vitals_trend.js';
+// import { updateMLPanel } from './ml.js';
+// import { triggerAlert } from './alerts.js';
 
 let reconnectAttempts = 0;
 
@@ -30,12 +36,10 @@ export function connectWS() {
     if (state.isPaused) return;
     
     const d = JSON.parse(ev.data);
-    
-    // Asumsikan semua pesan dari /ws/stream adalah raw sample
-    if (d.node_id !== undefined && d.signals) {
-      state.sampleCount = (state.sampleCount || 0) + 1;
+    if (d.type === 'window') {
+      state.windowCount++;
       
-      // Update node presence
+      // Update node details in node state
       if (!state.nodes.has(d.node_id)) {
         state.nodes.set(d.node_id, { node_id: d.node_id });
       }
@@ -43,30 +47,51 @@ export function connectWS() {
       node.last_seen_ms = Date.now();
       node.last_seen_ago_s = 0;
       
-      // Send to UI
+      // Update node card UI
       if (window.updateNodeCard) {
         window.updateNodeCard(d.node_id, d);
       }
       
-      // Update UI command bar counter if exists
+      // Alert checking logic
+      if (d.ml_results) {
+        Object.values(d.ml_results).forEach(result => {
+           if (!result.skipped && result.label) {
+               const label = (result.label || '').toLowerCase();
+               const isCritical = ['jatuh', 'fall', 'critical', 'tachycardia'].some(k => label.includes(k));
+               if (isCritical && result.confidence > 0.7) {
+                   if (window.triggerAlert) {
+                       window.triggerAlert(d.node_id, 'CRITICAL', `ML Detected: ${result.label} (${(result.confidence*100).toFixed(0)}%)`);
+                   }
+               }
+           }
+        });
+      }
+      
+      // Update UI command bar
       const wEl = document.getElementById('cmd-windows');
-      if (wEl) wEl.textContent = state.sampleCount;
+      if (wEl) wEl.textContent = state.windowCount;
     }
   };
 
-  // Events (Maintenance / Errors)
+  // Events
   state.wsEvents = new WebSocket(wsBase + '/ws/events');
   state.wsEvents.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
     if (d.type === 'event') {
       state.eventCount++;
       if (window.appendEvent) window.appendEvent(d, true);
+      
+      if (d.event_type === 'CRITICAL' && window.triggerAlert) {
+        window.triggerAlert(d.node_id, 'CRITICAL', d.detail);
+      }
     }
   };
 }
 
 function scheduleReconnect() {
   closeWS();
+  
+  // Exponential backoff (1s, 2s, 4s, 8s, 16s, 30s max)
   let delay = Math.pow(2, reconnectAttempts) * 1000;
   if (delay > 30000) delay = 30000;
   
