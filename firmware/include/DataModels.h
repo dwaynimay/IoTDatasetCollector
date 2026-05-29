@@ -29,6 +29,9 @@ struct ImuSample
     float gx = 0.0f;
     float gy = 0.0f;
     float gz = 0.0f;
+
+    // Validity flag — false jika belum ada data atau baca terakhir gagal
+    bool valid = false;
 };
 
 // =============================================================================

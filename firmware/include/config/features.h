@@ -25,7 +25,7 @@
 // Di LOG_LEVEL=3: ~50 calls/detik → overhead CPU signifikan.
 // Di LOG_LEVEL=2: hanya WARN/ERROR → hampir tidak ada Serial overhead.
 // ---------------------------------------------------------------------------
-#define LOG_LEVEL        3  
+#define LOG_LEVEL        2
 #define LOG_ENABLE_COLOR 0
 
 
@@ -52,5 +52,5 @@ namespace Mqtt
 {
     constexpr char     TOPIC_BASE[]        = "health_monitor";
     constexpr uint16_t KEEPALIVE           = 60;
-    constexpr uint16_t RECONNECT_DELAY_MS  = 5000;
+    constexpr uint16_t RECONNECT_DELAY_MS  = 1000;  // backoff awal; naik exponential hingga 60s
 }

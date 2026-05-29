@@ -90,8 +90,8 @@ static void taskReadIMU(void *param)
 {
     g_watchdog.registerTask();
 
-    uint32_t lastReadMs = 0;
-    uint8_t  failCount  = 0;
+    uint32_t lastReadMs  = 0;
+    uint8_t  failCount   = 0;
 
     for (;;)
     {
@@ -110,16 +110,24 @@ static void taskReadIMU(void *param)
 
             if (ok)
             {
-                failCount = 0;
+                failCount    = 0;
+                snap.valid   = true;
                 taskENTER_CRITICAL(&g_stateMux);
-                g_latestImu = snap;
+                g_latestImu  = snap;
                 taskEXIT_CRITICAL(&g_stateMux);
             }
             else
             {
                 failCount++;
+                LOG_EVERY_N(10, LOG_WARN, TAG, "IMU read gagal (fail #%u)", failCount);
+
                 if (failCount > 50)
                     g_watchdog.triggerRestart("IMU read fail 50x");
+
+                // Tandai snapshot stale agar publisher tidak kirim data lama
+                taskENTER_CRITICAL(&g_stateMux);
+                g_latestImu.valid = false;
+                taskEXIT_CRITICAL(&g_stateMux);
             }
 
             lastReadMs = millis();
@@ -158,7 +166,15 @@ static void taskMqttPublish(void *param)
         {
             LOG_WARN(TAG, "MQTT terputus, mencoba reconnect...");
             g_mqtt.tryReconnect();
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            vTaskDelay(pdMS_TO_TICKS(500));  // 500ms — cukup untuk backoff, tidak flatline lama
+            continue;
+        }
+
+        // Skip jika IMU belum valid (sensor belum ready atau sedang gagal baca)
+        if (!imu.valid)
+        {
+            LOG_EVERY_N(20, LOG_WARN, TAG, "IMU snapshot tidak valid — skip publish");
+            vTaskDelay(pdMS_TO_TICKS(Timing::SEND_INTERVAL_MS));
             continue;
         }
 
