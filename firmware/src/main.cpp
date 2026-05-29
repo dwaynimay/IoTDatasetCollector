@@ -157,7 +157,7 @@ static void taskMqttPublish(void *param)
         if (!g_mqtt.isConnected())
         {
             LOG_WARN(TAG, "MQTT terputus, mencoba reconnect...");
-            g_mqtt.reconnect();
+            g_mqtt.tryReconnect();
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
