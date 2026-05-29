@@ -7,7 +7,6 @@ from fastapi import WebSocket
 
 from core.storage import StorageManager
 from core.config import DB_PATH, RETENTION_HOURS
-from apps.ml_inference import ModelRegistry
 
 
 class BroadcastHub:
@@ -81,13 +80,9 @@ class BroadcastHub:
 # Module-level singletons
 hub = BroadcastHub()
 storage = StorageManager(db_path=DB_PATH, retention_hours=RETENTION_HOURS)
-registry = ModelRegistry()
 
 server_stats: dict = {
     "start_time_ms":    int(time.time() * 1000),
     "total_windows":    0,
-    "total_rekon_ms":   0.0,
     "total_val_errors": 0,
-    "total_low_quality": 0,
-    "total_critical":    0,
 }

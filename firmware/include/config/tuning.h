@@ -6,6 +6,8 @@
 //
 // ⚠️  Perubahan di sini bisa memengaruhi stabilitas — ubah satu per satu
 //     dan test setelah setiap perubahan.
+//
+// Dataset Collector: tidak ada mesh topology atau ESP-NOW queue.
 // =============================================================================
 
 #include <Arduino.h>
@@ -45,8 +47,8 @@ namespace Timing
 // ---------------------------------------------------------------------------
 // FREERTOS TASK PRIORITY (1 = terendah, 24 = tertinggi di ESP32)
 //
-// Urutan prioritas saat ini:
-//   PPG (4) > IMU (3) > ESPNOW_TX / MQTT_PUB (2) > MONITOR (1)
+// Urutan prioritas:
+//   PPG (4) > IMU (3) > MQTT_TX (2) > MONITOR (1)
 //
 // PPG butuh polling cepat agar tidak kehilangan beat → prioritas tertinggi.
 // Jangan set semua ke prioritas sama — FreeRTOS butuh hierarki.
@@ -55,18 +57,12 @@ namespace TaskPrio
 {
     constexpr uint8_t SENSOR_PPG = 4;
     constexpr uint8_t SENSOR_IMU = 3;
-    constexpr uint8_t ESPNOW_TX = 2;
-    constexpr uint8_t MQTT_PUB = 2;
-    constexpr uint8_t MONITOR = 1;
+    constexpr uint8_t MQTT_PUB   = 2;
+    constexpr uint8_t MONITOR    = 1;
 }
 
 // ---------------------------------------------------------------------------
 // FREERTOS STACK SIZE (bytes per task)
-//
-// CS_TX lebih besar karena:
-//   - 7 array float[32] lokal di stack = 896 byte
-//   - Matrix Φ encode overhead
-//   - snprintf untuk log
 //
 // Naikkan jika ada stack overflow (terlihat di Serial: "[WDT] Stack kritis")
 // ---------------------------------------------------------------------------
@@ -74,74 +70,17 @@ namespace StackSize
 {
     constexpr uint32_t SENSOR_PPG = 4096;
     constexpr uint32_t SENSOR_IMU = 4096;
-    constexpr uint32_t ESPNOW_TX = 12288;
-    constexpr uint32_t MQTT_PUB = 8192;
-    constexpr uint32_t MONITOR = 4096;
+    constexpr uint32_t MQTT_PUB   = 8192;
+    constexpr uint32_t MONITOR    = 4096;
 }
 
 // ---------------------------------------------------------------------------
-// QUEUE SIZE
+// NODE ID
 //
-// MQTT_MSG: jumlah pesan yang bisa antri sebelum gateway mulai buang paket.
-// RAM yang dipakai: sizeof(MqttMessage) × MQTT_MSG = 500B × 50 = 25 KB
+// NODE_ID digunakan sebagai identifier di MQTT topic:
+//   health_monitor/node_<NODE_ID>/raw
 //
-// Jangan naikkan sembarangan — setiap +10 entry = +5 KB heap gateway.
-// Cek log "[MONITOR] Queue MQTT: X% penuh" untuk tahu apakah perlu dinaikkan.
+// Setiap ESP32 dalam sistem harus punya NODE_ID unik.
+// Di-inject oleh platformio.ini via build_flags:
+//   -D NODE_ID=1
 // ---------------------------------------------------------------------------
-namespace QueueLen
-{
-    constexpr uint8_t IMU_DATA = 1;
-    constexpr uint8_t PPG_DATA = 1;
-    // Hybrid: 2 pesan/window/node × 2 node = 4 pesan/window
-    // Buffer 10 detik = 4 × (1000/640) × 10 = ~63 pesan
-    // Pakai 40 sebagai angka aman dengan RAM terjangkau
-    // RAM: 40 × (80 + 1800) = 75.200 byte — heap gateway 140KB, masih aman
-    constexpr uint8_t MQTT_MSG = 40;
-}
-
-// ---------------------------------------------------------------------------
-// MESH ROUTING TABLE — Node Neighbor Definitions (PHASE 3: N-Node Mesh)
-//
-// Definisikan topology mesh statis di compile-time.
-// Setiap sensor node menyimpan daftar neighbor yang bisa dipakai untuk relay.
-// Routing engine akan memilih neighbor terbaik berdasarkan RSSI.
-//
-// STRUKTUR:
-//   MeshTopology[nodeId] = {neighbor_node_ids...}
-//
-// CONTOH 3-NODE MESH:
-//   - Node 0: GATEWAY (tidak ada neighbors — tidak relay)
-//   - Node 1: SENSOR_A (bisa relay via Node 2)
-//   - Node 2: SENSOR_B (bisa relay via Node 1)
-//
-// CONTOH STAR (2-NODE):
-//   - Node 0: GATEWAY
-//   - Node 1: SENSOR_A (tidak ada neighbors — hanya direct ke gateway)
-//   - Node 2: SENSOR_B (tidak ada neighbors)
-//
-// Jika topology berubah (misalnya dari 2-node → 3-node), ubah array ini
-// dan recompile. Multi-hop akan otomatis ter-enable untuk nodes yang
-// memiliki neighbors dalam tabel.
-// ---------------------------------------------------------------------------
-namespace MeshTopology
-{
-    // Untuk sistem 3-node:
-    static constexpr uint8_t nodeNeighbors[3][2] = {
-        {0, 0},  // Node 0 (GATEWAY): no neighbors
-        {2, 0},  // Node 1: neighbors = [2, 0] — relay via 2 prioritas, fallback 0 (gateway)
-        {1, 0}   // Node 2: neighbors = [1, 0] — relay via 1 prioritas, fallback 0
-    };
-
-    // Untuk sistem 2-node (saat ini):
-    // static constexpr uint8_t nodeNeighbors[3][1] = {
-    //     {0}, // Node 0 (GATEWAY): no neighbors
-    //     {0}, // Node 1 (SENSOR_A): only gateway (no relay)
-    //     {0}  // Node 2 (SENSOR_B): only gateway (no relay)
-    // };
-
-    // Ukuran neighbors per node (untuk bounds checking)
-    static constexpr uint8_t maxNeighborsPerNode = 2;
-
-    // Total nodes dalam mesh
-    static constexpr uint8_t totalNodes = 3;
-}

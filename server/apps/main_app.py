@@ -1,5 +1,5 @@
 """
-main_app.py — Orkestrator satu proses: FastAPI + MQTT worker dalam satu perintah.
+main_app.py — Dataset Collector Server: FastAPI + MQTT raw data pipeline.
 
 Arsitektur:
     python -m server
@@ -13,19 +13,20 @@ Arsitektur:
                 │       sama persis dengan apps/dashboard/app.py
                 │
                 └── [background] mqtt-worker thread
-                        ├── listener.run() → blocking loop_forever()
+                        ├── subscribe topic health_monitor/+/+/raw
                         └── per pesan masuk:
-                                NodeState → processor → hub.publish_window_threadsafe()
+                                parse JSON → validasi minimal →
+                                simpan DB → hub.publish_window_threadsafe()
 
 Thread safety:
     StorageManager  → threading.Lock internal di storage.py
     _nodes dict     → threading.Lock di sini
-    NodeState bufs  → threading.Lock per node (di node_state.py)
     WebSocket push  → asyncio.run_coroutine_threadsafe via hub
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from contextlib import asynccontextmanager
@@ -34,76 +35,141 @@ import asyncio
 import uvicorn
 from fastapi import FastAPI
 
+try:
+    import paho.mqtt.client as mqtt
+    from paho.mqtt.enums import CallbackAPIVersion
+    _PAHO_V2 = True
+except ImportError:
+    import paho.mqtt.client as mqtt  # type: ignore
+    _PAHO_V2 = False
+
 from core import (
-    ValidatorRegistry, QualityAssessor, PHI,
     MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE,
     TOPIC_BASE, DB_PATH, RETENTION_HOURS,
-    CS_N, CS_M,
+    SIGNALS,
 )
 from core.logger import setup_logging
 
-# Reuse hub dan storage dari dashboard app — tidak buat instance baru
+# Reuse hub dan storage dari dashboard app
 from apps.dashboard.app import app as _dashboard_app
-from apps.dashboard.hub import hub, storage, registry
-from apps.reconstruct.notifier import notify_window, notify_event
-
-from apps.reconstruct.processor  import process_window
-from apps.reconstruct.listener   import run as run_listener
+from apps.dashboard.hub import hub, storage
 
 logger = logging.getLogger(__name__)
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 
-_nodes:      dict = {}
 _nodes_lock: threading.Lock = threading.Lock()
-_validator   = ValidatorRegistry()
-_assessor    = QualityAssessor(phi=PHI)
+_node_last_ts: dict[int, int] = {}   # node_id → last timestamp (ms)
 
 
 # ── MQTT worker thread ────────────────────────────────────────────────────────
+
+def _on_connect(client, userdata, flags, rc, properties=None) -> None:
+    rc_val = rc if isinstance(rc, int) else rc.value
+    if rc_val == 0:
+        topic = f"{TOPIC_BASE}/+/raw"
+        client.subscribe(topic)
+        logger.info("MQTT terhubung | subscribe: %s", topic)
+    else:
+        logger.error("MQTT gagal konek rc=%d", rc_val)
+
+
+def _on_message(client, userdata, message) -> None:
+    """Terima JSON raw, validasi minimal, simpan DB, push WebSocket."""
+    try:
+        payload: dict = json.loads(message.payload.decode())
+    except Exception as exc:
+        logger.error("JSON parse error pada topic %s: %s", message.topic, exc)
+        return
+
+    # Parse node_id dari topic: health_monitor/node_<ID>/raw
+    parts = message.topic.split("/")
+    try:
+        node_id = int(parts[1].split("_")[1])
+    except (IndexError, ValueError):
+        logger.warning("Format topic tidak dikenal: %s", message.topic)
+        return
+
+    # Validasi field wajib
+    required = {"ts", "ax", "ay", "az", "ir"}
+    if not required.issubset(payload.keys()):
+        missing = required - payload.keys()
+        logger.warning("Node %d: field hilang %s", node_id, missing)
+        return
+
+    ts = int(payload.get("ts", 0))
+
+    # Cek timestamp monotonicity (toleransi reboot)
+    with _nodes_lock:
+        last_ts = _node_last_ts.get(node_id, 0)
+        if ts > 0 and ts < last_ts - 5000:
+            # Kemungkinan reboot ESP32 — reset tracker
+            logger.info("Node %d: timestamp reset (reboot?), %d → %d", node_id, last_ts, ts)
+        _node_last_ts[node_id] = ts
+
+    # Simpan ke database
+    try:
+        for sig in SIGNALS:
+            if sig in payload:
+                storage.insert_sample(
+                    node_id   = node_id,
+                    signal    = sig,
+                    timestamp = ts,
+                    value     = float(payload[sig]),
+                )
+    except Exception as exc:
+        logger.error("DB insert error node %d: %s", node_id, exc)
+        return
+
+    # Push ke WebSocket dashboard
+    ws_data = {
+        "node_id": node_id,
+        "ts":      ts,
+        "signals": {sig: payload[sig] for sig in SIGNALS if sig in payload},
+    }
+    hub.publish_window_threadsafe(ws_data)
+
+    logger.debug("Node %d | ts=%d | signals=%s", node_id, ts,
+                 list(ws_data["signals"].keys()))
+
 
 def _run_mqtt_thread() -> None:
     """Blocking MQTT loop — dijalankan di background thread."""
     logger.info("MQTT worker thread started | broker=%s:%d", MQTT_BROKER, MQTT_PORT)
     try:
-        run_listener(
-            nodes        = _nodes,
-            broker       = MQTT_BROKER,
-            port         = MQTT_PORT,
-            keepalive    = MQTT_KEEPALIVE,
-            topic_base   = TOPIC_BASE,
-            storage      = storage,
-            processor_fn = process_window,
-            validator    = _validator,
-            assessor     = _assessor,
-        )
+        if _PAHO_V2:
+            client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+        else:
+            client = mqtt.Client()
+
+        client.on_connect = _on_connect
+        client.on_message = _on_message
+
+        client.connect(MQTT_BROKER, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
+        client.loop_forever()
     except Exception as exc:
         logger.critical("MQTT worker crashed: %s", exc, exc_info=True)
 
 
-# ── Lifespan override ─────────────────────────────────────────────────────────
+# ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def _combined_lifespan(app: FastAPI):
-    """
-    Ganti lifespan dashboard_server dengan versi yang juga start MQTT thread.
-    """
-    # Startup
+    """Startup: buka storage, set loop, start MQTT thread."""
     storage.open()
     hub.set_loop(asyncio.get_running_loop())
-    registry.scan("server/apps/ml_inference/models/", recursive=True)
 
     mqtt_thread = threading.Thread(
-        target  = _run_mqtt_thread,
-        name    = "mqtt-worker",
-        daemon  = True,   # mati otomatis saat main process exit
+        target = _run_mqtt_thread,
+        name   = "mqtt-worker",
+        daemon = True,
     )
     mqtt_thread.start()
 
     print("=" * 60)
-    print("  ESP32 Health Monitor — All-in-One Server")
-    print(f"  N={CS_N} M={CS_M} ({CS_M*100//CS_N}%)")
+    print("  IoT Dataset Collector — Server")
     print(f"  MQTT   : {MQTT_BROKER}:{MQTT_PORT}")
+    print(f"  Topic  : {TOPIC_BASE}/+/raw")
     print(f"  DB     : {DB_PATH} (retention={RETENTION_HOURS}h)")
     print(f"  API    : http://0.0.0.0:8000/docs")
     print(f"  WS     : ws://0.0.0.0:8000/ws/stream")
@@ -111,22 +177,20 @@ async def _combined_lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     storage.close()
     logger.info("Storage ditutup.")
 
 
 # ── Buat app dengan lifespan override ────────────────────────────────────────
 
-# Salin routes dari dashboard app, ganti lifespan saja
 app = FastAPI(
-    title       = _dashboard_app.title,
-    description = _dashboard_app.description,
-    version     = _dashboard_app.version,
+    title       = "IoT Dataset Collector",
+    description = "Raw sensor data acquisition via MQTT — IMU & PPG",
+    version     = "1.0.0",
     lifespan    = _combined_lifespan,
 )
 
-# Copy semua middleware dari dashboard app
+# Copy middleware dari dashboard app
 for middleware in _dashboard_app.user_middleware:
     app.add_middleware(middleware.cls, **middleware.kwargs)
 
@@ -142,11 +206,11 @@ def main() -> None:
     setup_logging()
     uvicorn.run(
         app,
-        host    = "0.0.0.0",
-        port    = 8000,
-        reload  = False,
-        workers = 1,   # WAJIB 1 — hub & storage singleton tidak bisa di-fork
-        log_config = None,  # biar setup_logging() yang handle format
+        host       = "0.0.0.0",
+        port       = 8000,
+        reload     = False,
+        workers    = 1,
+        log_config = None,
     )
 
 

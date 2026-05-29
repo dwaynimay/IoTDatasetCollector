@@ -11,10 +11,6 @@
 #   cp server/.env.example server/.env
 #   # Edit server/.env sesuai environment Anda
 #
-# CARA GANTI ALGORITMA REKONSTRUKSI:
-#   Set CS_ALGORITHM=lasso di .env → restart server → selesai.
-#   Tidak perlu ubah apps/ sama sekali.
-#
 # ATURAN:
 #   - Tidak ada nilai sensitif (IP, credential) yang hardcode di file ini.
 #   - Semua nilai prod harus di-set via environment variable OS / container.
@@ -65,32 +61,6 @@ MQTT_PORT      = _get_int("MQTT_PORT", 1883)
 MQTT_KEEPALIVE = _get_int("MQTT_KEEPALIVE", 60)
 TOPIC_BASE     = _get("TOPIC_BASE", "health_monitor")
 
-# =============================================================================
-# CS Algorithm
-# =============================================================================
-#
-# "omp"   → Hadamard-Gaussian Φ + DCT Ψ + OMP (default, tidak butuh sklearn)
-# "lasso" → Gaussian Φ + DCT Ψ + LASSO (butuh scikit-learn)
-#
-# ⚠️  Pastikan firmware menggunakan CS_Sensor.h yang sesuai:
-#   CS_ALGORITHM = "omp"   → lib/CS_Model_Gaussian/CS_Sensor.h
-#   CS_ALGORITHM = "lasso" → lib/CS_Model_Lasso/CS_Sensor.h
-CS_ALGORITHM = _get("CS_ALGORITHM", "omp")
-
-# =============================================================================
-# Parameter CS — HARUS sama dengan CS_Sensor.h di firmware
-# =============================================================================
-CS_N        = 64   # panjang window — harus pangkat 2
-CS_M        = 32   # jumlah pengukuran (50% kompresi)
-CS_PHI_SEED = 42   # seed Φ — HARUS identik dengan CS_PHI_SEED di firmware
-OMP_K       = 20   # sparsity level OMP
-
-# =============================================================================
-# LASSO (hanya dipakai jika CS_ALGORITHM = "lasso")
-# =============================================================================
-LASSO_ALPHA    = _get_float("LASSO_ALPHA", 0.001)
-LASSO_MAX_ITER = _get_int("LASSO_MAX_ITER", 5000)
-LASSO_TOL      = _get_float("LASSO_TOL", 1e-5)
 
 # =============================================================================
 # Logging
@@ -121,7 +91,7 @@ UNITS = {
 TS_SPREAD_TOLERANCE_MS = _get_int("TS_SPREAD_TOLERANCE_MS", 500)
 
 # =============================================================================
-# Visualizer (tidak berubah)
+# Visualizer
 # =============================================================================
 HISTORY_WINDOWS = 5
 MAX_HIST        = 60
@@ -131,9 +101,3 @@ COLORS = {
     "gx": "#9C27B0", "gy": "#F44336", "gz": "#00BCD4",
     "ir": "#E91E63",
 }
-
-# =============================================================================
-# Derived (dihitung dari konstanta di atas)
-# =============================================================================
-WINDOW_MS     = CS_N * 10        # durasi satu window dalam ms (64 sampel × 10ms)
-TOTAL_SAMPLES = CS_N * HISTORY_WINDOWS  # total sampel di rolling history

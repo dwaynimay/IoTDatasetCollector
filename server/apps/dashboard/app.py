@@ -29,10 +29,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title       = "Health Monitor Dashboard API",
+    title       = "IoT Dataset Collector API",
     description = (
-        "REST + WebSocket API untuk ESP32 Health Monitor.\n\n"
-        "**Jalankan bersamaan dengan** `reconstruct`."
+        "REST + WebSocket API untuk pengambilan dataset sensor IMU & PPG.\n\n"
+        "Data masuk via MQTT → disimpan ke SQLite → ditampilkan di dashboard."
     ),
     version     = "1.0.0",
     lifespan    = lifespan,
