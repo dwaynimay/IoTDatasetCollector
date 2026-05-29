@@ -51,18 +51,8 @@ static constexpr uint32_t HEALTH_CHECK_MS   = 5000;
 static constexpr uint32_t MIN_STACK_WATERMARK = 512; // bytes
 
 // Batas minimum free heap sebelum restart preventif.
-//
-// ⚠️  Gateway dan sensor punya budget heap yang sangat berbeda:
-//   SENSOR  : tanpa WiFi aktif → free heap ~50–80 KB → threshold 20 KB aman
-//   GATEWAY : WiFi AP_STA + ESP-NOW + MQTT → free heap normal ~8–12 KB
-//             Threshold 20 KB akan SELALU trigger restart di gateway!
-//
-// NODE_ROLE di-inject oleh platformio.ini — tidak perlu ubah di sini.
-#if NODE_ROLE == ROLE_GATEWAY
-  static constexpr uint32_t MIN_FREE_HEAP_KB = 4;   // gateway: absolute minimum
-#else
-  static constexpr uint32_t MIN_FREE_HEAP_KB = 20;  // sensor: lebih konservatif
-#endif
+// Standalone node (WiFi STA + MQTT) normal ~30–50 KB free heap.
+static constexpr uint32_t MIN_FREE_HEAP_KB = 10;
 
 
 // =============================================================================

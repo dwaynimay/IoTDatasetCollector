@@ -6,7 +6,7 @@
 // =============================================================================
 //
 // Tanggung jawab modul ini:
-//   1. Koneksi WiFi dalam mode WIFI_AP_STA
+//   1. Koneksi WiFi dalam mode WIFI_STA
 //   2. Koneksi MQTT ke broker (PubSubClient)
 //   3. Auto-reconnect dengan exponential backoff
 //   4. Publish pesan ke topic MQTT
@@ -32,7 +32,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include "MeshPackets.h"
 #include "../../include/Config.h"
 
 

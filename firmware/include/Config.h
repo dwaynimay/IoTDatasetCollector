@@ -25,7 +25,8 @@
 
 #include "config/features.h"    // (1) Flag fitur & LOG_LEVEL — HARUS PERTAMA
 #include "utils/Logger.h"       // (2) Makro LOG_* — butuh LOG_LEVEL dari (1)
+#include "DataModels.h"         // (3) Struct ImuSample, PpgSample
 
-#include "config/credentials.h" // (3) WiFi & MQTT credentials + NODE_ID
-#include "config/hardware.h"    // (4) Pin & alamat I2C
-#include "config/tuning.h"      // (5) Timing, priority, stack size
+#include "config/credentials.h" // (4) WiFi & MQTT credentials + NODE_ID
+#include "config/hardware.h"    // (5) Pin & alamat I2C
+#include "config/tuning.h"      // (6) Timing, priority, stack size

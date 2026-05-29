@@ -150,17 +150,12 @@ bool NetworkMqtt::tryReconnect()
 
 
 // =============================================================================
-// _connectWifi() — Koneksi WiFi dalam Mode WIFI_AP_STA
-//
-// AP tersembunyi diaktifkan bukan untuk diakses, melainkan untuk mengunci
-// channel radio agar ESP-NOW tidak terganggu channel hopping WiFi STA.
+// _connectWifi() — Koneksi WiFi dalam Mode WIFI_STA
 // =============================================================================
 bool NetworkMqtt::_connectWifi()
 {
-    // Mode AP_STA: STA untuk router, AP untuk kunci channel ESP-NOW
-    WiFi.mode(WIFI_AP_STA);
+    WiFi.mode(WIFI_STA);
 
-    // STA konek dulu — channel ditentukan oleh router
     LOG_INFO(TAG, "Konek ke WiFi '%s'...", Wifi::SSID);
     WiFi.begin(Wifi::SSID, Wifi::PASSWORD);
 
@@ -175,16 +170,8 @@ bool NetworkMqtt::_connectWifi()
         delay(500);
     }
 
-    uint8_t ch;
-    wifi_second_chan_t sch;
-    esp_wifi_get_channel(&ch, &sch);
-
-    // AP hidden di channel SAMA dengan STA agar ESP-NOW tidak mismatch
-    WiFi.softAP("gw_ch_lock", "12345678", ch, 1 /*hidden*/);
-    delay(100);
-
-    LOG_INFO(TAG, "WiFi terhubung | IP=%s | channel=%d (AP hidden sama channel)",
-             WiFi.localIP().toString().c_str(), ch);
+    LOG_INFO(TAG, "WiFi terhubung | IP=%s | channel=%d",
+             WiFi.localIP().toString().c_str(), WiFi.channel());
 
     return true;
 }
