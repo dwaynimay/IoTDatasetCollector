@@ -122,6 +122,7 @@ void SensorPPG::update()
     if (irValue == 0) return;
 
     _lastIrValue = irValue;
+    _lastRedValue = redValue;
 
     // ── Isi ring buffer untuk SpO2 ────────────────────────────────────────────
     // Buffer diisi setiap update() terlepas dari ada beat atau tidak.
@@ -310,18 +311,16 @@ bool SensorPPG::read(PpgSample& out)
 {
     if (!_connected)
     {
-        out           = {};
-        out.heartRate = -1;
-        out.spo2      = 0.0f;
-        out.valid     = false;
+        out          = {};
+        out.beat_avg = 0;
+        out.spo2     = 0.0f;
         return true;
     }
 
-    out.irRaw     = static_cast<uint32_t>(_lastIrValue);
-    out.redRaw    = 0;
-    out.heartRate = static_cast<int8_t>(constrain(_beatAvg, 0, 127));
-    out.spo2      = _spo2Valid ? _spo2 : 0.0f;
-    out.valid     = (_beatAvg > 20 && _beatAvg < 255) && _spo2Valid;
+    out.ir       = static_cast<uint32_t>(_lastIrValue);
+    out.red      = static_cast<uint32_t>(_lastRedValue);
+    out.beat_avg = static_cast<uint8_t>(constrain(_beatAvg, 0, 255));
+    out.spo2     = _spo2Valid ? _spo2 : 0.0f;
 
     return true;
 }

@@ -79,13 +79,12 @@ bool SensorMPU::read(ImuSample& out)
 
     // Kurangi offset kalibrasi (dalam domain raw ADC) lalu konversi ke fisik.
     // Urutan: subtract offset → bagi skala → kalikan gravitasi (khusus accel).
-    out.accelX = ((ax - _axOff) / ACCEL_SCALE) * GRAVITY;
-    out.accelY = ((ay - _ayOff) / ACCEL_SCALE) * GRAVITY;
-    out.accelZ = ((az - _azOff) / ACCEL_SCALE) * GRAVITY;
-    out.gyroX  =  (gx - _gxOff) / GYRO_SCALE;
-    out.gyroY  =  (gy - _gyOff) / GYRO_SCALE;
-    out.gyroZ  =  (gz - _gzOff) / GYRO_SCALE;
-    out.tempC  = 0; // tidak dipakai — skip parsing register suhu
+    out.ax = ((ax - _axOff) / ACCEL_SCALE) * GRAVITY;
+    out.ay = ((ay - _ayOff) / ACCEL_SCALE) * GRAVITY;
+    out.az = ((az - _azOff) / ACCEL_SCALE) * GRAVITY;
+    out.gx =  (gx - _gxOff) / GYRO_SCALE;
+    out.gy =  (gy - _gyOff) / GYRO_SCALE;
+    out.gz =  (gz - _gzOff) / GYRO_SCALE;
 
     return true;
 }

@@ -96,6 +96,7 @@ private:
 
     // ── Heart Rate state ──────────────────────────────────────────────────────
     long  _lastIrValue      = 0;
+    long  _lastRedValue     = 0;
     long  _lastBeatMs       = 0;
     float _beatsPerMinute   = 0.0f;
     int   _beatAvg          = 0;
