@@ -170,6 +170,9 @@ static void taskMqttPublish(void *param)
             continue;
         }
 
+        // PENTING: Panggil loop MQTT untuk keep-alive & proses queue incoming
+        g_mqtt.loop();
+
         // Skip jika IMU belum valid (sensor belum ready atau sedang gagal baca)
         if (!imu.valid)
         {

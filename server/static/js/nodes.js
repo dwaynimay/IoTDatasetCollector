@@ -99,34 +99,37 @@ export function renderNodeList() {
     
     // Setup charts and fetch history
     setTimeout(async () => {
-      // Initialize empty buffers
+      // FIX 3: Init buffer + fetch history ONLY once per node.
+      // On re-render (e.g. a second node appears), we skip the fetch so
+      // existing live data in the buffer is preserved — preventing zoom-out flash.
       if (!dataBuffers.has(node.node_id)) {
         dataBuffers.set(node.node_id, {
           ax: Array(BUFFER_SIZE).fill(null), ay: Array(BUFFER_SIZE).fill(null), az: Array(BUFFER_SIZE).fill(null),
           gx: Array(BUFFER_SIZE).fill(null), gy: Array(BUFFER_SIZE).fill(null), gz: Array(BUFFER_SIZE).fill(null),
           ir: Array(BUFFER_SIZE).fill(null), red: Array(BUFFER_SIZE).fill(null)
         });
-      }
 
-      // Fetch history and populate buffers
-      try {
-        const history = await fetchNodeHistory(node.node_id);
-        if (history) {
-          const buffers = dataBuffers.get(node.node_id);
-          for (const [sig, values] of Object.entries(history)) {
-            if (buffers[sig]) {
-              // Copy values to the end of the buffer
-              const len = Math.min(values.length, BUFFER_SIZE);
-              for (let i = 0; i < len; i++) {
-                buffers[sig][BUFFER_SIZE - len + i] = values[i];
+        // Fetch history only for newly seen nodes
+        try {
+          const history = await fetchNodeHistory(node.node_id);
+          if (history) {
+            const buffers = dataBuffers.get(node.node_id);
+            for (const [sig, values] of Object.entries(history)) {
+              if (buffers[sig]) {
+                // Copy values to the end of the buffer
+                const len = Math.min(values.length, BUFFER_SIZE);
+                for (let i = 0; i < len; i++) {
+                  buffers[sig][BUFFER_SIZE - len + i] = values[i];
+                }
               }
             }
           }
+        } catch (err) {
+          console.error("Failed to fetch history:", err);
         }
-      } catch (err) {
-        console.error("Failed to fetch history:", err);
       }
 
+      // Always re-init chart instances (DOM may have been rebuilt by renderNodeList)
       initIMUChart(node.node_id);
       initPPGChart(node.node_id);
     }, 10);
@@ -202,6 +205,10 @@ export function initIMUChart(nodeId) {
       {
         type: 'value', name: 'm/s²', nameTextStyle: { fontSize: 8, color: '#94a3b8' },
         position: 'left',
+        // FIX 2: Soft 10% padding — prevents Y axis from snapping to extremes
+        // when history range differs from live data range (zoom-out/zoom-in artifact)
+        min: value => { const r = value.max - value.min || 1; return value.min - r * 0.1; },
+        max: value => { const r = value.max - value.min || 1; return value.max + r * 0.1; },
         splitLine: { lineStyle: { color: 'rgba(0,0,0,0.04)' } },
         axisLabel: { fontSize: 8, fontFamily: 'var(--mono)', color: '#94a3b8',
           formatter: v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(1) }
@@ -209,6 +216,8 @@ export function initIMUChart(nodeId) {
       {
         type: 'value', name: '°/s', nameTextStyle: { fontSize: 8, color: '#94a3b8' },
         position: 'right',
+        min: value => { const r = value.max - value.min || 1; return value.min - r * 0.1; },
+        max: value => { const r = value.max - value.min || 1; return value.max + r * 0.1; },
         splitLine: { show: false },
         axisLabel: { fontSize: 8, fontFamily: 'var(--mono)', color: '#94a3b8',
           formatter: v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(1) }
@@ -299,7 +308,10 @@ export function initPPGChart(nodeId) {
       {
         type: 'value', name: 'ADC', nameTextStyle: { fontSize: 8, color: '#94a3b8' },
         position: 'left',
-        scale: true, // Auto scale to fit PPG waveform
+        // FIX 2: Soft 10% padding instead of raw scale:true.
+        // scale:true caused violent Y jumps when PPG baseline changed between history and live data.
+        min: value => { const r = value.max - value.min || 1000; return value.min - r * 0.1; },
+        max: value => { const r = value.max - value.min || 1000; return value.max + r * 0.1; },
         splitLine: { lineStyle: { color: 'rgba(0,0,0,0.04)' } },
         axisLabel: { fontSize: 8, fontFamily: 'var(--mono)', color: '#94a3b8',
           formatter: v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(0) }
@@ -318,8 +330,6 @@ export function initPPGChart(nodeId) {
   window.addEventListener('resize', () => chart && chart.resize());
 }
 
-// Global render loop to decouple data ingestion from charting
-// Runs at ~15 FPS to prevent UI lag on high frequency data
 setInterval(() => {
   for (const [nodeId, chart] of imuCharts.entries()) {
     const buffers = dataBuffers.get(nodeId);
@@ -328,12 +338,12 @@ setInterval(() => {
     chart.setOption({
       graphic: [{ id: 'nodata', style: { text: '' } }],
       series: [
-        { name: 'ax', data: buffers.ax },
-        { name: 'ay', data: buffers.ay },
-        { name: 'az', data: buffers.az },
-        { name: 'gx', data: buffers.gx },
-        { name: 'gy', data: buffers.gy },
-        { name: 'gz', data: buffers.gz },
+        { name: 'ax', data: buffers.ax.slice() },
+        { name: 'ay', data: buffers.ay.slice() },
+        { name: 'az', data: buffers.az.slice() },
+        { name: 'gx', data: buffers.gx.slice() },
+        { name: 'gy', data: buffers.gy.slice() },
+        { name: 'gz', data: buffers.gz.slice() },
       ]
     });
   }
@@ -345,8 +355,8 @@ setInterval(() => {
     chart.setOption({
       graphic: [{ id: 'nodata', style: { text: '' } }],
       series: [
-        { name: 'ir', data: buffers.ir },
-        { name: 'red', data: buffers.red },
+        { name: 'ir', data: buffers.ir.slice() },
+        { name: 'red', data: buffers.red.slice() },
       ]
     });
   }
@@ -365,7 +375,9 @@ export function updateNodeCard(nodeId, data) {
       });
     }
     renderNodeList();
-    return;
+    // FIX 1: Do NOT return early — fall through so the current window's
+    // signal data is still pushed into the buffer below. Previously this
+    // return caused the first data window of a new node to be silently dropped.
   }
   
   const node = state.nodes.get(nodeId);

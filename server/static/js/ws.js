@@ -12,7 +12,11 @@ let reconnectAttempts = 0;
 export function connectWS() {
   if (state.wsStream || state.wsEvents) return;
   
-  const wsBase = state.apiBase.replace(/^http/, 'ws');
+  let wsBase = state.apiBase.replace(/^http/, 'ws');
+  if (!wsBase) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsBase = `${protocol}//${window.location.host}`;
+  }
 
   // Stream
   state.wsStream = new WebSocket(wsBase + '/ws/stream');
@@ -36,7 +40,7 @@ export function connectWS() {
     if (state.isPaused) return;
     
     const d = JSON.parse(ev.data);
-    if (d.type === 'window') {
+    if (d.type === 'window' || d.signals) {
       state.windowCount++;
       
       // Update node details in node state
