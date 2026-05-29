@@ -79,13 +79,13 @@ RETENTION_HOURS = _get_int("RETENTION_HOURS", 24)
 # Signal metadata (tidak berubah — bukan credential)
 # =============================================================================
 IMU_SIGNALS = ["ax", "ay", "az", "gx", "gy", "gz"]
-PPG_SIGNALS = ["ir"]
+PPG_SIGNALS = ["ir", "red"]
 SIGNALS     = IMU_SIGNALS + PPG_SIGNALS
 
 UNITS = {
     "ax": "m/s²", "ay": "m/s²", "az": "m/s²",
     "gx": "deg/s", "gy": "deg/s", "gz": "deg/s",
-    "ir": "ADC",
+    "ir": "ADC", "red": "ADC",
 }
 
 TS_SPREAD_TOLERANCE_MS = _get_int("TS_SPREAD_TOLERANCE_MS", 500)
@@ -99,5 +99,5 @@ MAX_HIST        = 60
 COLORS = {
     "ax": "#2196F3", "ay": "#4CAF50", "az": "#FF9800",
     "gx": "#9C27B0", "gy": "#F44336", "gz": "#00BCD4",
-    "ir": "#E91E63",
+    "ir": "#E91E63", "red": "#F44336",
 }

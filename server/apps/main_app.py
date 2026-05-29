@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 main_app.py — Dataset Collector Server: FastAPI + MQTT raw data pipeline.
 
@@ -16,15 +18,13 @@ Arsitektur:
                         ├── subscribe topic health_monitor/+/+/raw
                         └── per pesan masuk:
                                 parse JSON → validasi minimal →
-                                simpan DB → hub.publish_window_threadsafe()
+                                simpan DB → hub.publish_sample_threadsafe()
 
 Thread safety:
     StorageManager  → threading.Lock internal di storage.py
     _nodes dict     → threading.Lock di sini
     WebSocket push  → asyncio.run_coroutine_threadsafe via hub
 """
-
-from __future__ import annotations
 
 import json
 import logging
@@ -50,16 +50,15 @@ from core import (
 )
 from core.logger import setup_logging
 
-# Reuse hub dan storage dari dashboard app
 from apps.dashboard.app import app as _dashboard_app
-from apps.dashboard.hub import hub, storage
+from apps.dashboard.hub import hub, storage, server_stats
 
 logger = logging.getLogger(__name__)
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 
 _nodes_lock: threading.Lock = threading.Lock()
-_node_last_ts: dict[int, int] = {}   # node_id → last timestamp (ms)
+_node_last_ts: dict[int, int] = {}
 
 
 # ── MQTT worker thread ────────────────────────────────────────────────────────
@@ -75,14 +74,20 @@ def _on_connect(client, userdata, flags, rc, properties=None) -> None:
 
 
 def _on_message(client, userdata, message) -> None:
-    """Terima JSON raw, validasi minimal, simpan DB, push WebSocket."""
+    """
+    Terima JSON raw dari firmware, simpan ke DB, push ke WebSocket.
+
+    Payload JSON dari firmware (main.cpp):
+      {"node":1,"ts":123456,"ax":0.12,"ay":-0.05,"az":9.81,
+       "gx":0.01,"gy":-0.02,"gz":0.00,"ir":45231,"red":30100}
+    """
     try:
         payload: dict = json.loads(message.payload.decode())
     except Exception as exc:
         logger.error("JSON parse error pada topic %s: %s", message.topic, exc)
         return
 
-    # Parse node_id dari topic: health_monitor/node_<ID>/raw
+    # ── Parse node_id dari topic: health_monitor/node_<ID>/raw ───────────────
     parts = message.topic.split("/")
     try:
         node_id = int(parts[1].split("_")[1])
@@ -90,8 +95,8 @@ def _on_message(client, userdata, message) -> None:
         logger.warning("Format topic tidak dikenal: %s", message.topic)
         return
 
-    # Validasi field wajib
-    required = {"ts", "ax", "ay", "az", "ir"}
+    # ── Validasi field wajib ──────────────────────────────────────────────────
+    required = {"ts", "ax", "ay", "az", "gx", "gy", "gz", "ir"}
     if not required.issubset(payload.keys()):
         missing = required - payload.keys()
         logger.warning("Node %d: field hilang %s", node_id, missing)
@@ -99,15 +104,18 @@ def _on_message(client, userdata, message) -> None:
 
     ts = int(payload.get("ts", 0))
 
-    # Cek timestamp monotonicity (toleransi reboot)
+    # ── Cek timestamp monotonicity ────────────────────────────────────────────
     with _nodes_lock:
         last_ts = _node_last_ts.get(node_id, 0)
-        if ts > 0 and ts < last_ts - 5000:
-            # Kemungkinan reboot ESP32 — reset tracker
-            logger.info("Node %d: timestamp reset (reboot?), %d → %d", node_id, last_ts, ts)
+        if 0 < ts < last_ts - 5000:
+            # Timestamp mundur jauh → kemungkinan reboot ESP32
+            logger.info(
+                "Node %d: timestamp reset (reboot?), %d → %d",
+                node_id, last_ts, ts,
+            )
         _node_last_ts[node_id] = ts
 
-    # Simpan ke database
+    # ── Simpan ke SQLite ──────────────────────────────────────────────────────
     try:
         for sig in SIGNALS:
             if sig in payload:
@@ -121,16 +129,15 @@ def _on_message(client, userdata, message) -> None:
         logger.error("DB insert error node %d: %s", node_id, exc)
         return
 
-    # Push ke WebSocket dashboard
+    server_stats["total_samples"] += 1
+
+    # ── Push ke WebSocket dashboard ───────────────────────────────────────────
     ws_data = {
         "node_id": node_id,
         "ts":      ts,
         "signals": {sig: payload[sig] for sig in SIGNALS if sig in payload},
     }
-    hub.publish_window_threadsafe(ws_data)
-
-    logger.debug("Node %d | ts=%d | signals=%s", node_id, ts,
-                 list(ws_data["signals"].keys()))
+    hub.publish_sample_threadsafe(ws_data)
 
 
 def _run_mqtt_thread() -> None:
@@ -142,11 +149,14 @@ def _run_mqtt_thread() -> None:
         else:
             client = mqtt.Client()
 
+        # Naikkan buffer internal paho agar tidak drop message besar
+        client.max_queued_messages_set(100)
+
         client.on_connect = _on_connect
         client.on_message = _on_message
 
         client.connect(MQTT_BROKER, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
-        client.loop_forever()
+        client.loop_forever(retry_first_connection=True)
     except Exception as exc:
         logger.critical("MQTT worker crashed: %s", exc, exc_info=True)
 
@@ -190,11 +200,9 @@ app = FastAPI(
     lifespan    = _combined_lifespan,
 )
 
-# Copy middleware dari dashboard app
 for middleware in _dashboard_app.user_middleware:
     app.add_middleware(middleware.cls, **middleware.kwargs)
 
-# Copy semua routes dari dashboard app
 for route in _dashboard_app.routes:
     app.routes.append(route)
 
@@ -202,7 +210,6 @@ for route in _dashboard_app.routes:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    """Jalankan semua sistem server dalam satu proses."""
     setup_logging()
     uvicorn.run(
         app,
